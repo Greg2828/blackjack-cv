@@ -37,6 +37,126 @@ _KEY_MAP = {v: k for k, v in _ACTION_MAP.items()}
 SEPARATOR = "─" * 46
 
 
+def _play_sub_hand(
+    hand: Hand,
+    dealer_up: Card,
+    state: GameState,
+    display: Display,
+    *,
+    is_ace_split: bool = False,
+) -> tuple[Hand, list[Action], list[Action], bool]:
+    """Juega el turno de una mano de split. Devuelve (hand, recommended, taken, doubled).
+    Mutates hand in-place. Actualiza state.player_hand para el display."""
+    recommended: list[Action] = []
+    taken: list[Action] = []
+    doubled = False
+
+    if is_ace_split:
+        new_card = _ask_card("Carta")
+        hand.add(new_card)
+        state.player_hand = hand
+        display.show(state, None, strategy_row=None, dealer_upcard_rank=dealer_up.rank)
+        _print_state(state, None)
+        print("  (Stand forzado — regla de As split)")
+        return hand, recommended, taken, doubled
+
+    first = True
+    while True:
+        row = full_row(hand, can_split=False, can_double=first, can_surrender=False)
+        rec = recommend(hand, dealer_up, can_split=False, can_double=first, can_surrender=False)
+        recommended.append(rec)
+        state.player_hand = hand
+        display.show(state, rec, strategy_row=row, dealer_upcard_rank=dealer_up.rank)
+        _print_state(state, rec)
+
+        if hand.is_bust() or hand.total() >= 21:
+            break
+
+        action = _ask_action(rec)
+        taken.append(action)
+        first = False
+
+        if action == Action.STAND:
+            break
+        elif action == Action.DOUBLE:
+            doubled = True
+            hand.add(_ask_card("Nueva carta"))
+            state.player_hand = hand
+            display.show(state, None)
+            _print_state(state, None)
+            break
+        elif action == Action.HIT:
+            hand.add(_ask_card("Nueva carta"))
+        else:
+            pass  # SPLIT / SURRENDER no disponibles dentro de un split
+
+    return hand, recommended, taken, doubled
+
+
+def _handle_split(
+    state: GameState,
+    dealer_up: Card,
+    display: Display,
+    logger: HandLogger,
+    first_rec: Action,
+) -> None:
+    """Gestiona el flujo completo tras elegir SPLIT:
+    dos sub-manos independientes → turno del crupier → resolución y log por mano."""
+    card1 = state.player_hand.cards[0]
+    card2 = state.player_hand.cards[1]
+    is_ace = card1.rank == 'A'
+
+    sub_results = []
+    for i, base_card in enumerate([card1, card2], 1):
+        print(f"\n  ─── Mano {i} (split) ───")
+        hand = Hand([base_card])
+        hand, hrec, htaken, hdoubled = _play_sub_hand(
+            hand, dealer_up, state, display, is_ace_split=is_ace
+        )
+        sub_results.append((hand, hrec, htaken, hdoubled))
+
+    # Turno del crupier — una sola vez para ambas manos
+    all_bust = all(h.is_bust() for h, *_ in sub_results)
+    if not all_bust:
+        state.phase = Phase.DEALER_TURN
+        print(f"\n  --- Turno del crupier ---")
+        hidden = _ask_card("Carta tapada del crupier")
+        state.dealer_hand = Hand([dealer_up, hidden])
+        print(f"  Crupier: {state.dealer_hand}")
+
+        while True:
+            d_total = state.dealer_hand.total()
+            stands_soft17 = (
+                config.DEALER_STAND_ON_SOFT_17
+                and state.dealer_hand.is_soft()
+                and d_total == 17
+            )
+            if d_total >= 17 or stands_soft17:
+                tag = "BUST" if state.dealer_hand.is_bust() else "STAND"
+                print(f"  → Crupier {tag} ({d_total})")
+                break
+            new_card = _ask_card("Crupier pide carta")
+            state.dealer_hand.add(new_card)
+            print(f"  Crupier: {state.dealer_hand}")
+
+    # Resolución y log de cada sub-mano
+    state.phase = Phase.RESOLVED
+    print()
+    for i, (hand, hrec, htaken, hdoubled) in enumerate(sub_results, 1):
+        state.player_hand = hand
+        outcome, delta = state.resolve_hand(hand, doubled=hdoubled, is_split=True)
+        state.bankroll += delta
+        sign = "+" if delta >= 0 else ""
+        print(f"  Mano {i}: {outcome.value.upper()}  {sign}${delta:.2f}")
+        display.show_outcome(outcome, delta)
+        log_rec  = [first_rec] + hrec if i == 1 else hrec
+        log_take = [Action.SPLIT] + htaken if i == 1 else htaken
+        logger.log(state, log_rec, log_take, outcome, delta)
+
+    print(f"\n  Banca: ${state.bankroll:.2f}")
+    input("  (enter para continuar) ")
+
+
 def _parse_hand(raw: str) -> Hand:
     return Hand([Card(r.upper()) for r in raw.strip().split() if r])
 
@@ -123,8 +243,8 @@ def play_hand(state: GameState, display: Display, logger: HandLogger) -> None:
             _print_state(state, None)
             break
         elif action == Action.SPLIT:
-            # Simplified: continue playing as a single hand
-            print("  (Split registrado — continúa jugando la mano normalmente)")
+            _handle_split(state, dealer_up, display, logger, rec)
+            return
         elif action == Action.HIT:
             state.player_hand.add(_ask_card("Nueva carta"))
 

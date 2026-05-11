@@ -19,8 +19,9 @@ from src.game.state import GameState, Phase, Action, Outcome
 from src.game.hand import Hand
 from src.perception.camera import Camera
 from src.perception.detector import CardDetector
+from src.perception.chip_detector import ChipDetector
 from src.core.motion import MotionDetector
-from src.decision.strategy import recommend
+from src.decision.strategy import recommend, full_row
 from src.ui.display import Display
 from src.analysis.logger import HandLogger
 
@@ -58,6 +59,11 @@ def main() -> None:
         zone_dealer=config.ZONE_DEALER,
         zone_player=config.ZONE_PLAYER,
     )
+    chip_detector = ChipDetector(
+        chip_values=config.CHIP_VALUES,
+        chip_hsv_ranges=config.CHIP_HSV_RANGES,
+        min_area=config.CHIP_MIN_AREA,
+    )
 
     if not detector.ready:
         print("[AVISO] Modelo YOLOv8 no encontrado.")
@@ -77,13 +83,24 @@ def main() -> None:
             frame = cam.read()
             _, just_stabilized = motion.update(frame)
 
-            # Re-detectamos las cartas cuando la escena se estabiliza tras movimiento.
+            # Re-detectamos cuando la escena se estabiliza tras movimiento.
             # Esto evita procesar frames ruidosos mientras el jugador mueve cartas.
-            if just_stabilized and detector.ready:
-                player_cards, dealer_cards = detector.detect(frame)
-                state.player_hand = Hand(player_cards)
-                state.dealer_hand = Hand(dealer_cards)
-                state.phase       = _infer_phase(state)
+            if just_stabilized:
+                if detector.ready:
+                    player_cards, dealer_cards = detector.detect(frame)
+                    state.player_hand = Hand(player_cards)
+                    state.dealer_hand = Hand(dealer_cards)
+                    state.phase       = _infer_phase(state)
+
+                # Detección de fichas en zona de apuesta (solo si calibrado y esperando apuesta)
+                if chip_detector.calibrated and state.phase == Phase.WAITING_BET:
+                    detected_bet = chip_detector.detect(
+                        frame,
+                        config.ZONE_BETTING['y_min'],
+                        config.ZONE_BETTING['y_max'],
+                    )
+                    if detected_bet > 0:
+                        state.bet = detected_bet
 
             recommendation: Action | None = None
 
@@ -91,16 +108,25 @@ def main() -> None:
                 resolved_this_hand = False
                 dealer_upcard  = state.dealer_hand.visible_cards[0]
                 first_decision = len(state.player_hand.visible_cards) == 2
+                can_split_now = first_decision and state.player_hand.is_pair()
                 recommendation = recommend(
                     state.player_hand,
                     dealer_upcard,
-                    can_split=first_decision and state.player_hand.is_pair(),
+                    can_split=can_split_now,
+                    can_double=first_decision,
+                    can_surrender=first_decision,
+                )
+                row = full_row(
+                    state.player_hand,
+                    can_split=can_split_now,
                     can_double=first_decision,
                     can_surrender=first_decision,
                 )
                 if not recommended_sequence or recommended_sequence[-1] != recommendation:
                     recommended_sequence.append(recommendation)
-                display.show(state, recommendation)
+                display.show(state, recommendation,
+                             strategy_row=row,
+                             dealer_upcard_rank=dealer_upcard.rank)
 
             elif state.phase == Phase.RESOLVED and not resolved_this_hand:
                 outcome, delta = state.resolve()

@@ -19,6 +19,9 @@ CHIP_HSV_RANGES = {
     'chip_2': {'lower': None, 'upper': None},
     'chip_3': {'lower': None, 'upper': None},
 }
+# Área mínima de contorno para reconocer un blob como ficha (px²).
+# Ajustar según distancia de la cámara a la mesa.
+CHIP_MIN_AREA = 500
 
 # === Zonas del frame (fracciones de altura) ===
 FRAME_WIDTH = 1280
