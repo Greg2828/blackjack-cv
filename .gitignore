@@ -4,6 +4,7 @@ venv/
 .pytest_cache/
 data/raw_images/
 data/labeled/
+data/synthetic/
 models/*.pt
 data/games_log.csv
 *.log

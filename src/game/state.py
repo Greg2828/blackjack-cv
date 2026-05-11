@@ -13,9 +13,11 @@ class Phase(Enum):
 
 
 class Action(Enum):
-    HIT    = "hit"
-    STAND  = "stand"
-    DOUBLE = "double"
+    HIT       = "hit"
+    STAND     = "stand"
+    DOUBLE    = "double"
+    SPLIT     = "split"
+    SURRENDER = "surrender"
 
 
 class Outcome(Enum):
@@ -34,10 +36,14 @@ class GameState:
     bankroll: float = 100.0
     phase: Phase = Phase.WAITING_BET
     doubled: bool = False
+    surrendered: bool = False
 
     def resolve(self) -> tuple[Outcome, float]:
         """Calcula el resultado final y el delta de bankroll.
         Llamar cuando el crupier haya terminado su mano."""
+        if self.surrendered:
+            return Outcome.LOSE, -(self.bet / 2)
+
         p, d = self.player_hand, self.dealer_hand
         bet_amount = self.bet * (2 if self.doubled else 1)
 
