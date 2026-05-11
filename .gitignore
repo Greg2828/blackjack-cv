@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+venv/
+.pytest_cache/
+data/raw_images/
+data/labeled/
+models/*.pt
+data/games_log.csv
+*.log
+.vscode/
+.idea/
