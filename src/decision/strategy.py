@@ -55,6 +55,28 @@ _HARD: dict[int, list[Action]] = {
 }
 
 
+_UPCARD_RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'A']
+
+
+def full_row(
+    player_hand: Hand,
+    *,
+    can_split: bool = True,
+    can_double: bool = True,
+    can_surrender: bool = True,
+) -> list[Action]:
+    """Devuelve la fila completa de la estrategia para esta mano.
+    El resultado es una lista de 10 acciones, una por cada carta del crupier (2..A).
+    Útil para mostrar la tabla visual en pantalla."""
+    return [
+        recommend(player_hand, Card(r),
+                  can_split=can_split,
+                  can_double=can_double,
+                  can_surrender=can_surrender)
+        for r in _UPCARD_RANKS
+    ]
+
+
 def recommend(
     player_hand: Hand,
     dealer_upcard: Card,

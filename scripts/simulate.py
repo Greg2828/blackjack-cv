@@ -6,6 +6,10 @@ Uso:
     python scripts/simulate.py
     python scripts/simulate.py --bankroll 200
 """
+import os
+os.environ.setdefault('QT_QPA_PLATFORM', 'xcb')
+os.environ.setdefault('QT_LOGGING_RULES', '*.debug=false;qt.qpa.*=false')
+
 import sys
 import argparse
 from pathlib import Path
@@ -15,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.game.card import Card
 from src.game.hand import Hand
 from src.game.state import GameState, Phase, Action, Outcome
+from src.decision.strategy import full_row
 from src.decision.strategy import recommend
 from src.analysis.logger import HandLogger
 from src.ui.display import Display
@@ -44,7 +49,8 @@ def _ask_action(rec: Action) -> Action:
 
 
 def _ask_card(prompt: str) -> Card:
-    return Card(input(f"  {prompt}: ").strip().upper())
+    raw = input(f"  {prompt}: ").strip().upper().split()[0]
+    return Card(raw)
 
 
 def _print_state(state: GameState, rec: Action | None) -> None:
@@ -80,6 +86,12 @@ def play_hand(state: GameState, display: Display, logger: HandLogger) -> None:
     # --- Turno del jugador ---
     first = True
     while True:
+        row = full_row(
+            state.player_hand,
+            can_split=first and state.player_hand.is_pair(),
+            can_double=first,
+            can_surrender=first,
+        )
         rec = recommend(
             state.player_hand, dealer_up,
             can_split=first and state.player_hand.is_pair(),
@@ -87,7 +99,9 @@ def play_hand(state: GameState, display: Display, logger: HandLogger) -> None:
             can_surrender=first,
         )
         recommended.append(rec)
-        display.show(state, rec)
+        display.show(state, rec,
+                     strategy_row=row,
+                     dealer_upcard_rank=dealer_up.rank)
         _print_state(state, rec)
 
         if state.player_hand.is_bust() or state.player_hand.total() >= 21:

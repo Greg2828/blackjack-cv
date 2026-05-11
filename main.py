@@ -1,3 +1,7 @@
+import os
+os.environ.setdefault('QT_QPA_PLATFORM', 'xcb')
+os.environ.setdefault('QT_LOGGING_RULES', '*.debug=false;qt.qpa.*=false')
+
 """
 Bucle principal de Blackjack CV.
 
