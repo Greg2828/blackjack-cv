@@ -102,9 +102,10 @@ def main() -> None:
 
     with Camera(width=config.FRAME_WIDTH, height=config.FRAME_HEIGHT) as cam:
         while True:
-            frame = cam.read()
-            _overlay(frame, current_rank, counts)
-            cv2.imshow("Captura Dataset", frame)
+            clean = cam.read()              # frame limpio — es el que se guarda
+            display = clean.copy()
+            _overlay(display, current_rank, counts)
+            cv2.imshow("Captura Dataset", display)
 
             key = cv2.waitKey(30) & 0xFF
 
@@ -118,7 +119,7 @@ def main() -> None:
             elif key == ord(' ') and current_rank:
                 n    = counts[current_rank]
                 path = base / current_rank / f"{current_rank}_{n:04d}.jpg"
-                cv2.imwrite(str(path), cam.read())
+                cv2.imwrite(str(path), clean)   # guarda el frame sin overlay
                 counts[current_rank] += 1
                 total_captured += 1
                 print(f"  [{total_captured}] Guardada: {path.name}")
