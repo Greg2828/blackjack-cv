@@ -41,14 +41,23 @@ Sistema de visión artificial sobre **Raspberry Pi 5** que observa una mesa real
 
 | Elemento | Detalle |
 |---|---|
-| Hardware | Raspberry Pi 5, Pi Camera |
+| Hardware | Raspberry Pi 5, Pi Camera Module 3 (IMX708, 12.3 MP) |
 | OS | Raspberry Pi OS Bookworm (64-bit) |
 | Lenguaje | Python 3.13 |
-| Detección de cartas | YOLOv8 nano (Ultralytics) — inferencia solo, entrenamiento en Colab |
+| Acceso a cámara | **picamera2** (obligatorio en Pi 5 + Bookworm — `cv2.VideoCapture` no funciona con libcamera) |
+| Detección de cartas | YOLOv8 nano (Ultralytics) — inferencia en Pi, entrenamiento en Colab |
 | Visión | OpenCV 4.x |
 | Análisis | Pandas, Matplotlib, Seaborn |
 | Tests | pytest |
 | Entorno virtual | `python3 -m venv venv --system-site-packages` (picamera2 preinstalado en Bookworm) |
+
+### Nota sobre la Pi Camera Module 3 (IMX708)
+
+En Pi 5 con Bookworm, la cámara usa el stack **libcamera**. `cv2.VideoCapture` abre el dispositivo pero no puede leer frames. La solución es `picamera2`.
+
+Además, `picamera2` devuelve datos en orden **BGR** aunque el formato configurado sea `RGB888` — verificado empíricamente. No se aplica ninguna conversión de color.
+
+La documentación completa del sensor y su configuración está en `docs/camera.md`.
 
 ---
 
@@ -66,23 +75,27 @@ Sistema de visión artificial sobre **Raspberry Pi 5** que observa una mesa real
 | Logger CSV por mano | — | 302 manos de muestra guardadas |
 | Análisis estadístico (`stats.py` + notebook) | — | EV, win rate, adherencia, gráficos |
 | Detector de movimiento (`motion.py`) | — | Frame differencing, estabilización configurable |
-| Bucle principal (`main.py`) | — | Estructura completa; sin detección hasta tener modelo |
+| Bucle principal (`main.py`) | — | Estructura completa |
 | Generador datos sintéticos | — | Cartas sobre fondo verde con anotaciones YOLO |
-| **Captura de fotos reales** (`capture_dataset.py`) | — | Guarda frames limpios (sin overlay) |
-| **Auto-anotación** (`auto_annotate.py`) | — | Genera etiquetas YOLO por contorno, sin herramientas externas |
-| **Detector de fichas** (`chip_detector.py`) | — | HSV con filtro circular; degradación elegante sin calibrar |
-| **Calibración de fichas** (`calibrate_chips.py`) | — | Herramienta de muestreo HSV con ratón |
+| Captura de fotos reales (`capture_dataset.py`) | — | Guarda frames limpios (sin overlay) |
+| Auto-anotación (`auto_annotate.py`) | — | Genera etiquetas YOLO por contorno, sin herramientas externas |
+| Detector de fichas (`chip_detector.py`) | — | HSV con filtro circular; degradación elegante sin calibrar |
+| Calibración de fichas (`calibrate_chips.py`) | — | Herramienta de muestreo HSV con ratón |
 | Notebook de entrenamiento Colab | — | Soporta fotos reales y datos sintéticos |
+| **Configuración Pi Camera Module 3** | — | picamera2 + autofoco continuo + AWB + AE |
+| **Dataset capturado** | — | 1450 fotos reales, 14 clases, baraja de corazones |
+| **Auto-anotación ejecutada** | — | 1164 train / 286 val, 0 fallos |
+| **Modelo YOLOv8n entrenado** | — | **mAP50 = 0.960** · mAP50-95 = 0.949 · 3.9ms/imagen |
 
 **Total: 55 tests, todos pasan.**
 
-### ⚠️ Pendiente (bloqueado por hardware/datos)
+### ⚠️ Pendiente
 
 | Componente | Qué falta |
 |---|---|
-| Modelo YOLOv8 entrenado | Hacer fotos → `auto_annotate.py` → entrenar en Colab |
 | Fichas calibradas | Ejecutar `calibrate_chips.py` con la cámara apuntando a la mesa |
-| Prueba con cámara real | Conectar Pi Camera y ejecutar `test_camera.py` |
+| Prueba en producción | Ejecutar `main.py` con modelo y cámara sobre la mesa real |
+| Fine-tuning (opcional) | Añadir fotos del 2 y el 5 (recall más bajo), fotos sobre tapiz real |
 
 ---
 
@@ -94,6 +107,9 @@ blackjack-cv/
 ├── config.py                        # Todas las constantes del sistema
 ├── requirements.txt
 │
+├── docs/
+│   └── camera.md                    # Especificaciones IMX708 y decisiones de configuración
+│
 ├── src/
 │   ├── game/
 │   │   ├── card.py                  # Clase Card (rank, value, is_ace, is_back)
@@ -103,7 +119,7 @@ blackjack-cv/
 │   ├── decision/
 │   │   └── strategy.py              # Basic strategy completa: recommend() y full_row()
 │   ├── perception/
-│   │   ├── camera.py                # Wrapper Pi Camera / VideoCapture
+│   │   ├── camera.py                # Wrapper picamera2 (Pi 5 + Bookworm)
 │   │   ├── detector.py              # Detector YOLOv8 (stub gracioso sin modelo)
 │   │   └── chip_detector.py         # Detección de fichas por HSV
 │   ├── ui/
@@ -124,27 +140,28 @@ blackjack-cv/
 │   └── test_camera.py               # Verifica Pi Camera y muestra zonas — necesita cámara
 │
 ├── notebooks/
-│   ├── analysis.ipynb               # Análisis estadístico del historial de partidas
-│   └── colab_train.ipynb            # Entrenamiento YOLOv8 en Google Colab (GPU gratuita)
+│   ├── analysis.ipynb                              # Análisis estadístico del historial de partidas
+│   ├── colab_train.ipynb                           # Entrenamiento YOLOv8 en Google Colab
+│   ├── colab_trainPrimerEntrenamientoEjecutado.ipynb  # Notebook ejecutado — primer entrenamiento real
+│   └── dia_2_dataset_y_entrenamiento.ipynb         # Documentación sesión 2: cámara, dataset y resultados
 │
 ├── tests/
 │   ├── test_card.py                 # 6 tests
 │   ├── test_hand.py                 # 10 tests
 │   ├── test_deck.py                 # 3 tests
 │   ├── test_strategy.py             # 18 tests
-│   └── test_state.py                # 18 tests — resolve() y resolve_hand() (split)
+│   └── test_state.py                # 18 tests
 │
-├── models/                          # Vacío — aquí va yolov8n_blackjack.pt tras entrenar
+├── models/
+│   └── yolov8n_blackjack.pt         # Modelo entrenado — mAP50=0.960 (14 clases, 1450 fotos)
+│
 └── data/
     ├── raw_images/                  # Fotos brutas capturadas (excluido de git)
-    │   ├── A/                       # Una carpeta por clase
-    │   ├── 2/ … K/
-    │   └── BACK/
-    ├── labeled/                     # Dataset anotado listo para Colab (excluido de git)
-    │   ├── images/train/ y val/
+    │   ├── A/ … BACK/               # 14 carpetas, ~103 fotos cada una
+    ├── labeled/                     # Dataset anotado (excluido de git)
+    │   ├── images/train/ y val/     # 1164 train / 286 val
     │   ├── labels/train/ y val/
     │   └── dataset.yaml
-    ├── synthetic/                   # Dataset sintético generado (excluido de git)
     └── games_log.csv                # Historial de partidas (excluido de git)
 ```
 
@@ -152,113 +169,57 @@ blackjack-cv/
 
 ## 5. Pipeline completo: de fotos a modelo funcionando
 
-Esta sección explica paso a paso cómo pasar de no tener modelo a tener el sistema funcionando en tiempo real. Si nunca has entrenado un modelo de visión artificial, léela entera — cada concepto está explicado.
-
 ### ¿Qué es YOLO y por qué lo necesitamos?
 
-YOLO (You Only Look Once) es un algoritmo de detección de objetos. Dado un frame de vídeo, devuelve una lista de objetos detectados, cada uno con: su clase (ej. "A", "K", "BACK"), su posición en el frame (bounding box), y una puntuación de confianza.
+YOLO (You Only Look Once) es un algoritmo de detección de objetos. Dado un frame de vídeo, devuelve una lista de objetos detectados con su clase (ej. "A", "K", "BACK"), su posición en el frame (bounding box) y una puntuación de confianza.
 
-Para que YOLO funcione con nuestras cartas, hay que entrenarlo: mostrarle miles de fotos de cartas con su posición marcada exactamente, para que aprenda qué aspecto tiene cada rango. Sin ese entrenamiento, el modelo no sabe nada sobre cartas de blackjack.
+Para que YOLO funcione con nuestras cartas hay que entrenarlo: mostrarle miles de fotos de cartas con su posición marcada exactamente. Sin ese entrenamiento, el modelo no sabe nada sobre cartas de blackjack.
 
-El Raspberry Pi 5 no tiene GPU y no puede entrenar el modelo (tardaría días). Por eso entrenamos en **Google Colab**, que ofrece GPUs gratuitas. Una vez entrenado, el modelo resultante (un archivo `.pt` de ~6 MB) se copia a la Pi, donde solo hace *inferencia* (predecir) — eso sí es rápido incluso sin GPU.
+El Raspberry Pi 5 no tiene GPU y no puede entrenar el modelo eficientemente. Por eso entrenamos en **Google Colab**, que ofrece GPUs en la nube. Una vez entrenado, el modelo resultante (un archivo `.pt` de ~6 MB) se copia a la Pi, donde solo hace *inferencia* — eso sí es rápido incluso sin GPU (≈3.9ms por imagen en T4, velocidad estimada ≈15–20ms en Pi 5).
 
 ---
 
 ### Paso 1 — Capturar fotos (`capture_dataset.py`)
 
-**¿Por qué fotos reales y no sintéticas?**
-
-Las imágenes sintéticas generadas por `generate_synthetic_data.py` sirven para pre-entrenar rápido, pero son dibujos vectoriales sobre fondo verde. Un modelo entrenado solo con datos sintéticos puede fallar con tus cartas físicas reales bajo la iluminación de tu mesa. Las fotos reales le muestran al modelo exactamente lo que verá en producción.
-
-**¿Cuántas fotos?**
-
-- **Mínimo funcional**: 80 fotos por clase × 14 clases = 1.120 fotos
-- **Recomendado para alta precisión**: 150 fotos por clase × 14 clases = 2.100 fotos
-- Las 14 clases son: A, 2, 3, 4, 5, 6, 7, 8, 9, 10, J, Q, K, BACK
-
-**Qué hacer durante la captura:**
-
 ```bash
 python scripts/capture_dataset.py
 ```
 
-- La pantalla muestra el feed de la cámara con una **cruz y un rectángulo guía** verde en el centro.
-- Teclas `A`, `2`–`9`, `0` (=10), `J`, `Q`, `K`, `B` (=BACK) seleccionan la clase activa.
-- `ESPACIO` guarda la foto. `D` borra la última.
-- El panel lateral derecho muestra cuántas fotos tienes de cada clase.
-- El script guarda frames **limpios** (sin texto ni rectángulos superpuestos) en `data/raw_images/RANK/`.
+**Las 14 clases y sus teclas:**
 
-**Consejos para fotos de calidad:**
+| Tecla | Clase | Tecla | Clase |
+|-------|-------|-------|-------|
+| `A` | As | `J` | Jota |
+| `2`–`9` | Números | `W` | Reina (no `Q` — ver nota) |
+| `0` | Diez | `K` | Rey |
+| `B` | BACK (dorso) | `ESC` | Salir |
 
-| Qué variar | Por qué |
-|---|---|
-| Iluminación (luz natural, artificial, sombras) | El modelo verá la mesa en condiciones reales variadas |
-| Ángulo leve de la carta (0°–20°) | Las cartas raramente están perfectamente horizontales |
-| Posición en el frame (no siempre centrada) | En juego real las cartas están en distintas zonas |
-| Distancia a la cámara (ligeramente más cerca/lejos) | Cubre variación de escala |
-| Fondos: el tapete real, la mano del crupier cerca | El modelo aprende a ignorar el contexto |
-| **No variar**: el rango de la carta — una foto = una clase | La etiqueta tiene que ser correcta |
+> **Nota:** La tecla `Q` está reservada para salir en otros scripts. En `capture_dataset.py` la Reina se selecciona con `W` para evitar el conflicto.
+
+`ESPACIO` = capturar foto | `D` = borrar última
+
+**Objetivo:** ≥100 fotos por clase × 14 clases = ≥1400 fotos. Variar ángulo (0°–40°), posición, distancia, rotación y oclusión parcial. Incluir fotos con dos cartas solapadas — reproduce la situación real de la mesa.
+
+**Fondo:** usar tela oscura sobre el tapiz real. El tapiz verde con patrones confunde la auto-anotación basada en contornos.
 
 ---
 
 ### Paso 2 — Auto-anotar (`auto_annotate.py`)
 
-**¿Qué es una anotación YOLO?**
-
-YOLO no solo necesita saber *qué* carta sale en cada foto — también necesita saber *dónde* está exactamente, con un rectángulo de localización (bounding box). Para cada imagen, el formato YOLO es un archivo `.txt` con una línea por objeto:
+YOLO necesita para cada imagen un archivo `.txt` con la bounding box en formato normalizado:
 
 ```
-clase  x_centro  y_centro  ancho  alto
+class_id  x_centro  y_centro  ancho  alto
 ```
 
-Todos los valores son decimales entre 0 y 1 (normalizados al tamaño del frame). Por ejemplo, una carta en el centro de la imagen con un cuarto del tamaño del frame sería:
-
-```
-0  0.500000  0.500000  0.250000  0.357000
-```
-
-Donde `0` es el índice de la clase "A" en `CARD_CLASSES`. Sin estos archivos `.txt`, YOLO no puede aprender.
-
-**Lo que hace `auto_annotate.py`:**
-
-Como cada foto tiene una sola carta sobre un fondo relativamente uniforme, el script puede detectar el borde de la carta automáticamente mediante análisis de contornos (sin necesitar herramientas externas como LabelImg o Roboflow). Prueba tres estrategias en cascada:
-
-1. **Canny** — detecta bordes por gradiente de intensidad. Funciona bien con cartas blancas sobre tapete oscuro.
-2. **Otsu normal** — umbralización automática del histograma. Carta clara sobre fondo oscuro.
-3. **Otsu inverso** — lo contrario. Carta oscura sobre fondo claro.
-
-Para cada contorno encontrado, verifica que el ratio ancho/alto sea compatible con una carta (63.5 mm / 88.9 mm ≈ 0.71). Si ninguna estrategia produce un contorno razonable, la foto se marca como fallida.
+`auto_annotate.py` genera estos archivos automáticamente por análisis de contornos (Canny + Otsu), válida la proporción ancho/alto contra la de una carta estándar (63.5mm / 88.9mm ≈ 0.714) y divide en train/val.
 
 ```bash
-# Anotar todas las fotos de raw_images/ y generar data/labeled/
-python scripts/auto_annotate.py
-
-# Modo visual: muestra cada foto con su bounding box para que puedas verificar
-# ESPACIO = ok    D = borrar esta foto    Q = salir del preview
-python scripts/auto_annotate.py --preview
-
-# Avisar si una clase tiene menos de 100 fotos válidas
-python scripts/auto_annotate.py --min-photos 100
+python scripts/auto_annotate.py --preview   # revisión visual con bboxes
+python scripts/auto_annotate.py             # ejecución directa
 ```
 
-**Salida:**
-
-```
-data/labeled/
-├── images/
-│   ├── train/   ← 80% de las fotos de cada clase (mezcladas aleatoriamente)
-│   └── val/     ← 20% de las fotos de cada clase
-├── labels/
-│   ├── train/   ← un .txt por imagen con la bounding box YOLO
-│   └── val/
-└── dataset.yaml ← configuración completa lista para el notebook de Colab
-```
-
-La división train/val es **estratificada por clase**: el 20% de validación se toma de forma proporcional de cada clase, no aleatoriamente del total. Esto garantiza que haya ejemplos de cada carta tanto en train como en val.
-
-**¿Qué hacer si hay muchas fotos fallidas?**
-
-Ejecuta con `--preview`, revisa las fotos marcadas como fallidas y borra las que tengan mala iluminación, la carta fuera de cuadro o el fondo demasiado similar a la carta. Luego vuelve a ejecutar sin `--preview`.
+En `--preview`: `ESPACIO` = ok | `D` = borrar foto | `Q` = salir del preview.
 
 ---
 
@@ -269,71 +230,53 @@ cd ~/projects/blackjack-cv/data
 zip -r labeled.zip labeled/
 ```
 
-Sube `labeled.zip` a cualquier carpeta de tu Google Drive (no importa cuál — el notebook la buscará automáticamente).
+Sube `labeled.zip` a cualquier carpeta de tu Google Drive. El notebook la buscará automáticamente de forma recursiva.
 
 ---
 
 ### Paso 4 — Entrenar en Google Colab (`colab_train.ipynb`)
 
-**¿Por qué Colab?**
+1. Ve a colab.research.google.com
+2. Archivo → Abrir notebook → Google Drive → `blackjack-cv/notebooks/colab_train.ipynb`
+3. Entorno de ejecución → Cambiar tipo → GPU (T4 o superior) → Guardar
+4. Ejecutar celdas en orden
 
-Google Colab ofrece GPUs gratuitas (normalmente NVIDIA T4). Con esa GPU, entrenar 100 épocas sobre ~2.000 fotos tarda unos **15–25 minutos**. En el Raspberry Pi 5 (sin GPU) tardaría entre 8 y 15 horas.
+**Resultado del primer entrenamiento (2026-05-15):**
 
-**Abrir el notebook:**
+| Métrica | Valor |
+|---------|-------|
+| Dataset | 1450 fotos reales, 1 baraja (corazones) |
+| GPU | Tesla T4 (Google Colab Pro) |
+| Épocas | 100 (sin early stopping) |
+| mAP50 | **0.960** (mejor época: 82) |
+| mAP50-95 | 0.949 |
+| Precision | 0.942 |
+| Recall | 0.898 |
+| Velocidad | 3.9 ms/imagen (inferencia en T4) |
 
-1. Ve a [colab.research.google.com](https://colab.research.google.com)
-2. Archivo → Abrir notebook → Google Drive → navega hasta `blackjack-cv/notebooks/colab_train.ipynb`
-3. En el menú superior: Entorno de ejecución → Cambiar tipo → GPU T4 → Guardar
-4. Ejecuta las celdas en orden (Shift+Enter o el botón ▶ de cada celda)
+**Rendimiento por clase:**
 
-**Qué hacen las celdas:**
+| Clase | mAP50 | Nota |
+|-------|-------|------|
+| BACK | 0.995 | Casi perfecto — el dorso es visualmente único |
+| J / K | 0.993 | Excelente |
+| 7 / 9 | 0.988 / 0.983 | Muy bueno |
+| A / 10 | 0.953 / 0.960 | Bueno |
+| 2 / 5 | 0.925 | Recall más bajo (0.761 / 0.745) — candidatos a más fotos |
 
-| Celda | Qué hace |
-|---|---|
-| 1. Verificar GPU | Comprueba que tienes GPU activa (si no, el entrenamiento tardará horas) |
-| 2. Instalar dependencias | `pip install ultralytics` — instala YOLOv8 |
-| 3. Montar Drive | Conecta tu Google Drive al entorno de Colab |
-| 4. Localizar dataset | Busca `labeled.zip` (fotos reales) o `synthetic.zip` como fallback |
-| 5. Extraer y preparar | Descomprime el zip y corrige las rutas del `dataset.yaml` para Colab |
-| 6. Entrenar | Ejecuta `model.train()` — aquí ocurre el aprendizaje real |
-| 7. Evaluar | Calcula mAP50, precision y recall sobre el conjunto de validación |
-| 8. Ver ejemplos | Muestra 4 imágenes de validación con las detecciones superpuestas |
-| 9. Guardar en Drive | Copia el mejor modelo (`best.pt`) a `Drive/blackjack-cv/models/` |
-
-**¿Qué ocurre durante el entrenamiento?**
-
-En cada *época*, el modelo ve todas las imágenes de entrenamiento, calcula cuánto se equivoca (loss) y ajusta sus pesos internos para equivocarse menos. Después de cada época, se evalúa en el conjunto de validación (fotos que nunca ha visto) para medir si realmente está aprendiendo o solo memorizando.
-
-El entrenamiento para automáticamente (`patience=20`) si el mAP en validación no mejora en 20 épocas consecutivas.
-
-**¿Qué es mAP50 y cuándo es suficientemente bueno?**
-
-mAP50 (mean Average Precision at IoU ≥ 0.5) es la métrica principal de calidad. Un valor de 0.50 significa "detecta la mitad de las cartas de forma aceptable". Un valor de 1.00 sería perfección.
-
-| mAP50 | Interpretación |
-|---|---|
-| < 0.70 | El modelo no está aprendiendo bien — revisar fotos y anotaciones |
-| 0.70 – 0.85 | Funciona pero cometerá errores notables en el juego real |
-| 0.85 – 0.93 | Bueno. Usado con cautela (umbral de confianza alto) funciona bien |
-| > 0.93 | Excelente. Objetivo con fotos reales bien anotadas |
-
-Si el mAP es bajo, las causas más comunes son: pocas fotos por clase, fotos con mala iluminación, anotaciones incorrectas, o demasiada similitud entre el fondo y las cartas.
+Ver análisis detallado en `notebooks/dia_2_dataset_y_entrenamiento.ipynb`.
 
 ---
 
-### Paso 5 — Copiar el modelo a la Pi y arrancar
+### Paso 5 — Copiar el modelo a la Pi
 
 ```bash
-# Opción A — desde el navegador:
-# Descarga best.pt desde Drive/blackjack-cv/models/
-# Cópialo a la Pi con USB o scp
-
-# Opción B — directamente en la Pi:
-pip install gdown
-gdown 'URL_DEL_ARCHIVO' -O ~/projects/blackjack-cv/models/yolov8n_blackjack.pt
-
+# El modelo ya está en models/yolov8n_blackjack.pt
 # Verificar zonas con la cámara conectada
 python scripts/test_camera.py
+
+# Calibrar fichas (opcional)
+python scripts/calibrate_chips.py
 
 # Arrancar el sistema
 python main.py
@@ -343,19 +286,11 @@ python main.py
 
 ### Calibrar las fichas (apuesta automática)
 
-Una vez el sistema detecta cartas correctamente, puedes calibrar la detección de fichas para que lea la apuesta automáticamente:
-
 ```bash
 python scripts/calibrate_chips.py
 ```
 
-- La ventana muestra el feed de la cámara con el valor HSV del píxel bajo el cursor.
-- Haz clic en el centro de una ficha para muestrear su color (región 15×15 px).
-- Presiona `1`, `2` o `3` para asignar la muestra a `chip_1`, `chip_2` o `chip_3`.
-- Presiona `p` para imprimir el bloque de configuración.
-- Copia el bloque resultante en `config.py` bajo `CHIP_HSV_RANGES`.
-
-Una vez calibrado, `main.py` detectará el total de fichas en la zona de betting al estabilizarse la escena y actualizará la apuesta automáticamente.
+Mueve el ratón sobre una ficha para ver su HSV. Clic para muestrear. `1`/`2`/`3` asigna la muestra. `p` imprime el bloque para `config.py`. `q` sale. Ver `CHIP_HSV_RANGES` en `config.py`.
 
 ---
 
@@ -382,7 +317,7 @@ Lógica pura del juego — no sabe nada de cámaras ni pantallas.
 - `Action`: `HIT`, `STAND`, `DOUBLE`, `SPLIT`, `SURRENDER`
 - `Outcome`: `WIN`, `LOSE`, `PUSH`, `BLACKJACK`
 - `GameState.resolve()` → `(Outcome, delta)`. Maneja surrender (-bet/2), blackjack (1.5x), double (2x bet).
-- `GameState.resolve_hand(hand, doubled, is_split)` → mismo cálculo pero para una mano de split. Con `is_split=True`, el 21 de 2 cartas no paga como blackjack natural (regla estándar de casino).
+- `GameState.resolve_hand(hand, doubled, is_split)` → mismo cálculo para mano de split. Con `is_split=True`, el 21 de 2 cartas no paga como blackjack natural.
 
 ---
 
@@ -390,12 +325,6 @@ Lógica pura del juego — no sabe nada de cámaras ni pantallas.
 
 Motor de *basic strategy* estándar (6 barajas, crupier planta en soft 17, late surrender).
 
-Tablas internas:
-- `_PAIR` — 10 filas (2,2 hasta A,A) × 10 columnas (upcard 2..A)
-- `_SOFT` — 8 filas (soft 13..20) × 10 columnas
-- `_HARD` — 10 filas (hard 8..17) × 10 columnas
-
-Funciones públicas:
 - `recommend(player_hand, dealer_upcard, *, can_split, can_double, can_surrender) → Action`
 - `full_row(player_hand, ...) → list[Action]` — 10 acciones (una por upcard), para la tabla visual
 
@@ -403,15 +332,19 @@ Funciones públicas:
 
 ### `src/perception/`
 
-**`camera.py`** — `Camera(source=0, width=1280, height=720)`. Context manager sobre `cv2.VideoCapture`.
+**`camera.py`** — `Camera(source=0, width=1280, height=720)`. Wrapper sobre **picamera2**.
+- Usa `create_video_configuration(format="RGB888")` + `capture_array("main")`
+- El frame raw ya está en BGR — no se aplica conversión de color
+- Activa autofoco continuo (AfMode=2), AE y AWB al arrancar
+- Ver `docs/camera.md` para la documentación completa del sensor IMX708
 
 **`detector.py`** — `CardDetector(model_path, card_classes, zone_dealer, zone_player)`.
 - Si el `.pt` no existe: `detector.ready = False`, `detect()` devuelve listas vacías sin error.
 - Si existe: detecta con YOLOv8 y separa cartas por zona Y (DEALER: 0–40%, PLAYER: 40–75%).
 
 **`chip_detector.py`** — `ChipDetector(chip_values, chip_hsv_ranges, min_area)`.
-- `calibrated` → True si al menos un chip tiene rangos HSV definidos (no None).
-- `detect(frame, zone_y_min, zone_y_max)` → suma del valor de las fichas detectadas. Usa detección de contornos circulares en espacio HSV. Devuelve 0.0 sin error si no está calibrado.
+- `calibrated` → True si al menos un chip tiene rangos HSV definidos.
+- `detect(frame, zone_y_min, zone_y_max)` → suma del valor de fichas detectadas. Devuelve 0.0 sin error si no está calibrado.
 
 ---
 
@@ -422,12 +355,10 @@ Funciones públicas:
 `show(state, recommendation, strategy_row, dealer_upcard_rank)`:
 - Zona superior: cartas de jugador y crupier con totales.
 - Centro: acción recomendada en grande y coloreada.
-- Zona inferior: fila de estrategia — 10 celdas coloreadas, celda activa resaltada en blanco.
+- Zona inferior: fila de estrategia — 10 celdas coloreadas, celda activa resaltada.
 - Pie: bankroll y apuesta.
 
 Colores: HIT=verde, STAND=rojo, DOUBLE=naranja, SPLIT=morado, SURRENDER=amarillo.
-
-`show_outcome(outcome, delta)` — pantalla de resultado con delta económico.
 
 ---
 
@@ -459,50 +390,19 @@ python scripts/simulate.py
 python scripts/simulate.py --bankroll 500
 ```
 
-Introduce cartas manualmente por teclado. Flujo de una mano:
-1. Apuesta (enter = 10)
-2. Carta visible del crupier (ej: `7`)
-3. Tus cartas (ej: `A 8`)
-4. El sistema muestra recomendación y tabla visual en ventana OpenCV
-5. Acción: `h` hit, `s` stand, `d` double, `sp` split, `su` surrender (enter acepta la recomendada)
-6. Si HIT o DOUBLE: introduce la nueva carta
-7. Carta tapada del crupier y las que saque
-8. Resultado mostrado en pantalla y guardado en CSV
+Introduce cartas manualmente por teclado. Flujo: apuesta → carta visible crupier → tus cartas → recomendación → acción → resultado → CSV.
 
-**Split real implementado**: al elegir `sp`, el sistema separa las dos cartas y juega cada sub-mano de forma independiente. Si es un split de Ases, se reparte una carta por mano y el jugador no puede pedir más (regla estándar de casino). Cada sub-mano se resuelve y registra por separado.
+Split real implementado: dos manos independientes. As-split: una carta por mano, sin poder pedir más.
 
 ---
 
-### `gen_sample_data.py` — Generador de partidas simuladas ✅
-
-```bash
-python scripts/gen_sample_data.py
-python scripts/gen_sample_data.py --hands 500 --bankroll 200
-```
-
-Simula partidas siguiendo *basic strategy* al 100%. Puebla el CSV sin jugar manualmente. Con 300 manos: win rate ~43.7%, EV ~-0.41% (house edge teórico con estrategia perfecta ≈ 0.5%).
-
----
-
-### `generate_synthetic_data.py` — Dataset sintético ✅
-
-```bash
-python scripts/generate_synthetic_data.py --n 2000 --out data/synthetic
-```
-
-Genera imágenes de cartas vectoriales sobre fondo verde con rotación, escala variable e iluminación ruidosa. Útil para un primer entrenamiento rápido. Las fotos reales darán más precisión.
-
----
-
-### `capture_dataset.py` — Captura de fotos reales ⚠️ NECESITA CÁMARA
+### `capture_dataset.py` — Captura de fotos ⚠️ NECESITA CÁMARA
 
 ```bash
 python scripts/capture_dataset.py
 ```
 
-Muestra el feed con overlay (cruz guía, contadores por clase, instrucciones). El frame que se guarda en disco es **limpio** — sin texto ni rectángulos superpuestos, porque el modelo no debe ver esos artefactos durante el entrenamiento.
-
-Controles: `A` `2`–`9` `0`(=10) `J` `Q` `K` `B` = seleccionar clase | `ESPACIO` = capturar | `D` = borrar última | `Q` = salir.
+Feed en vivo con cruz guía y contador por clase. Frame guardado en disco es limpio (sin overlay). Ver teclas en [Paso 1](#paso-1--capturar-fotos-capture_datasetpy).
 
 ---
 
@@ -510,11 +410,11 @@ Controles: `A` `2`–`9` `0`(=10) `J` `Q` `K` `B` = seleccionar clase | `ESPACIO
 
 ```bash
 python scripts/auto_annotate.py
-python scripts/auto_annotate.py --preview       # revisión visual
+python scripts/auto_annotate.py --preview
 python scripts/auto_annotate.py --min-photos 100
 ```
 
-Lee `data/raw_images/`, detecta la carta en cada imagen por análisis de contorno, escribe `.txt` YOLO, divide train/val (80/20 estratificado) y genera `data/labeled/dataset.yaml`. Avisa de clases con pocas fotos y fotos con detección fallida. Ver [Paso 2](#paso-2--auto-anotar-auto_annotatepy) para detalles.
+Lee `data/raw_images/`, detecta contornos, escribe `.txt` YOLO, divide train/val (80/20 estratificado) y genera `dataset.yaml`.
 
 ---
 
@@ -522,10 +422,9 @@ Lee `data/raw_images/`, detecta la carta en cada imagen por análisis de contorn
 
 ```bash
 python scripts/calibrate_chips.py
-python scripts/calibrate_chips.py --image foto_mesa.jpg
 ```
 
-Mueve el ratón sobre una ficha para ver su HSV en tiempo real. Clic para muestrear. `1`/`2`/`3` asigna la muestra a chip_1/chip_2/chip_3. `p` imprime el bloque para copiar en `config.py`. `q` sale.
+Ratón sobre ficha → ver HSV. Clic → muestrear. `1`/`2`/`3` → asignar chip. `p` → imprimir bloque config. `q` → salir.
 
 ---
 
@@ -535,7 +434,27 @@ Mueve el ratón sobre una ficha para ver su HSV en tiempo real. Clic para muestr
 python scripts/test_camera.py
 ```
 
-Muestra el feed con las tres zonas superpuestas: azul (DEALER), verde (PLAYER), naranja (BETTING). Verificar que las cartas del jugador caen en la zona verde y las del crupier en la azul. Ajustar `config.py` si no. `s` guarda foto, `q` sale.
+Muestra feed con las 3 zonas superpuestas. Verificar que las cartas caen en la zona correcta. `s` guarda foto, `q` sale.
+
+---
+
+### `gen_sample_data.py` ✅
+
+```bash
+python scripts/gen_sample_data.py --hands 300 --bankroll 100
+```
+
+Simula partidas siguiendo basic strategy. Puebla el CSV sin jugar manualmente.
+
+---
+
+### `generate_synthetic_data.py` ✅
+
+```bash
+python scripts/generate_synthetic_data.py --n 2000 --out data/synthetic
+```
+
+Genera imágenes sintéticas de cartas con anotaciones YOLO. Útil para pre-entrenar antes de tener fotos reales.
 
 ---
 
@@ -552,29 +471,24 @@ python -m pytest tests/ -v
 | `test_card.py` | 6 | Valores numéricos, is_ace, is_back, ValueError en BACK.value |
 | `test_hand.py` | 10 | Totales soft/hard, bust, blackjack natural, pair, carta tapada ignorada |
 | `test_deck.py` | 3 | 52 cartas, draw() reduce count, seed reproducible |
-| `test_strategy.py` | 18 | Pares (A,A; 8,8; 10,10; 5,5), soft 18 vs varios upcards, hard (11, 16, 15, 17+, 12), surrender, fallback sin can_surrender |
-| `test_state.py` | 18 | `resolve()`: bust, dealer bust, player/dealer higher, push, blackjack, surrender, double. `resolve_hand()`: 21 tras split ≠ blackjack, doubled, dealer blackjack |
+| `test_strategy.py` | 18 | Pares (A,A; 8,8; 10,10; 5,5), soft 18, hard (11, 16, 15, 17+, 12), surrender, fallback |
+| `test_state.py` | 18 | resolve(): bust, dealer bust, push, blackjack, surrender, double. resolve_hand(): split |
 
 ---
 
 ## 9. Notebooks
 
 ### `analysis.ipynb` ✅
-
-Análisis del historial de partidas. Requiere `data/games_log.csv`.
-
-```bash
-python scripts/gen_sample_data.py --hands 300   # si el CSV está vacío
-jupyter notebook notebooks/analysis.ipynb
-```
-
-7 secciones: carga de datos, resumen numérico (EV, win rate), evolución del bankroll, distribución de resultados, EV por upcard del crupier, distribución de acciones, adherencia a la estrategia por sesión.
-
----
+Análisis del historial de partidas. Requiere `data/games_log.csv`. 7 secciones: resumen numérico, bankroll, resultados, EV por upcard, acciones, adherencia.
 
 ### `colab_train.ipynb` ✅
+Entrenamiento YOLOv8 en Google Colab. Soporta `labeled.zip` (fotos reales) y `synthetic.zip`.
 
-Entrenamiento YOLOv8 en Google Colab. Soporta fotos reales (`labeled.zip`) y datos sintéticos (`synthetic.zip`). Ver [Paso 4](#paso-4--entrenar-en-google-colab-colab_trainipynb) para el flujo completo.
+### `colab_trainPrimerEntrenamientoEjecutado.ipynb` ✅
+Notebook ejecutado del primer entrenamiento real (2026-05-15). Contiene el log completo de las 100 épocas y los resultados de evaluación.
+
+### `dia_2_dataset_y_entrenamiento.ipynb` ✅
+Documentación de la sesión 2. Incluye: configuración de la cámara (problemas y soluciones), diseño del dataset, curva de entrenamiento completa con análisis por fases, resultados por clase con gráficos. Documento de referencia para el proyecto académico.
 
 ---
 
@@ -586,30 +500,26 @@ Entrenamiento YOLOv8 en Google Colab. Soporta fotos reales (`labeled.zip`) y dat
 cd ~/projects/blackjack-cv
 source venv/bin/activate
 
-python -m pytest tests/ -v                          # 55 tests
-python scripts/simulate.py                          # simulador interactivo
-python scripts/gen_sample_data.py --hands 300       # generar datos CSV
-python -c "from src.analysis.stats import load_log, print_summary; \
-           print_summary(load_log('data/games_log.csv'))"
+python -m pytest tests/ -v
+python scripts/simulate.py
+python scripts/gen_sample_data.py --hands 300
 jupyter notebook notebooks/analysis.ipynb
 ```
 
-### Pipeline de entrenamiento con fotos reales
+### Pipeline de entrenamiento (ya completado)
 
 ```bash
-python scripts/capture_dataset.py    # ≥100 fotos por clase con cámara
-python scripts/auto_annotate.py --preview   # verificar anotaciones
-python scripts/auto_annotate.py             # generar data/labeled/
+python scripts/capture_dataset.py    # ≥100 fotos por clase
+python scripts/auto_annotate.py --preview
 cd data && zip -r labeled.zip labeled/
-# → subir labeled.zip a Drive → colab_train.ipynb en Colab
-# → descargar best.pt → copiar a models/yolov8n_blackjack.pt
+# → subir a Drive → colab_train.ipynb → descargar best.pt → models/
 ```
 
-### Con cámara y modelo entrenados
+### Con modelo entrenado (estado actual)
 
 ```bash
 python scripts/test_camera.py       # verificar zonas
-python scripts/calibrate_chips.py   # calibrar fichas (opcional)
+python scripts/calibrate_chips.py   # calibrar fichas
 python main.py                      # sistema completo
 ```
 
@@ -618,14 +528,14 @@ python main.py                      # sistema completo
 ## 11. Flujo de datos en tiempo real
 
 ```
-[Pi Camera]
-    │  frame 1280×720 @ ~30 fps
+[Pi Camera IMX708]
+    │  frame 1280×720 @ ~30 fps  (picamera2, BGR sin conversión)
     ▼
 [motion.py]  ──── detecta movimiento (Gaussian blur + absdiff)
     │  just_stabilized=True  (exactamente un frame, tras 2 s quieto)
     ▼
-[detector.py] ──── YOLOv8 ──── lista de Card por zona Y del frame
-    │                          DEALER: y 0–40%   PLAYER: y 40–75%
+[detector.py] ──── YOLOv8n ──── lista de Card por zona Y del frame
+    │  mAP50=0.960             DEALER: y 0–40%   PLAYER: y 40–75%
     ▼
 [chip_detector.py] ──── HSV en zona BETTING (y 75–100%)
     │                   → state.bet actualizado si calibrado
@@ -657,7 +567,7 @@ python main.py                      # sistema completo
 | `ZONE_PLAYER` | y: 0.40–0.75 | Zona de cartas del jugador |
 | `ZONE_BETTING` | y: 0.75–1.00 | Zona de fichas/apuesta |
 | `CHIP_VALUES` | chip_1=1, chip_2=5, chip_3=25 | Valor monetario por tipo de ficha |
-| `CHIP_HSV_RANGES` | todos `None` | Calibrar con `calibrate_chips.py` |
+| `CHIP_HSV_RANGES` | todos `None` | Sin calibrar — calibrar con `calibrate_chips.py` |
 | `CHIP_MIN_AREA` | 500 | Área mínima de contorno para reconocer una ficha (px²) |
 | `MOTION_THRESHOLD` | 30 | Sensibilidad del detector de movimiento |
 | `STABILITY_SECONDS` | 2.0 | Segundos quieto para activar detección YOLO |
@@ -671,18 +581,15 @@ python main.py                      # sistema completo
 
 ## 13. Próximos pasos
 
-### Inmediato — construir el modelo
-- [ ] Conectar Pi Camera y verificar zonas con `scripts/test_camera.py`
-- [ ] Capturar ≥100 fotos por clase (14 clases) con `scripts/capture_dataset.py`
-- [ ] Anotar con `scripts/auto_annotate.py --preview` y revisar calidad
-- [ ] Entrenar en Google Colab con `notebooks/colab_train.ipynb`
-- [ ] Objetivo de calidad: **mAP50 > 0.93** en el conjunto de validación
-- [ ] Si mAP es bajo: añadir más fotos variando iluminación y ángulo
-
-### Tras el modelo
+### Inmediato
 - [ ] Calibrar fichas con `scripts/calibrate_chips.py`
-- [ ] Probar `main.py` en sesión real y ajustar `ZONE_DEALER` / `ZONE_PLAYER` en `config.py` si alguna carta se asigna a la zona incorrecta
-- [ ] Si el modelo comete errores en producción: capturar los frames problemáticos, añadirlos al dataset y re-entrenar
+- [ ] Probar `main.py` en sesión real sobre la mesa
+- [ ] Ajustar `ZONE_DEALER` / `ZONE_PLAYER` en `config.py` si alguna carta se asigna a la zona incorrecta
+
+### Mejoras del modelo
+- [ ] Fine-tuning: añadir más fotos del **2** (recall 0.761) y del **5** (recall 0.745)
+- [ ] Capturar fotos directamente sobre el tapiz real con distintas condiciones de luz
+- [ ] Re-entrenar desde `yolov8n_blackjack.pt` (fine-tuning, no desde cero)
 
 ---
 
