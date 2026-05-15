@@ -5,6 +5,8 @@ venv/
 data/raw_images/
 data/labeled/
 data/synthetic/
+data/*.zip
+data/detector_test_*.jpg
 models/*.pt
 data/games_log.csv
 *.log
