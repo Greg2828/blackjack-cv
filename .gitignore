@@ -12,3 +12,11 @@ data/games_log.csv
 *.log
 .vscode/
 .idea/
+
+# backups locales (no subir nunca)
+.git.backup/
+*.backup
+
+# screenshots de pruebas
+*screenshot*.png
+*screenshot*.jpg
