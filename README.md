@@ -20,7 +20,7 @@ Sistema de visión artificial sobre **Raspberry Pi 5** que observa una mesa real
 10. [Cómo ejecutar cada parte](#10-cómo-ejecutar-cada-parte)
 11. [Flujo de datos en tiempo real](#11-flujo-de-datos-en-tiempo-real)
 12. [config.py — referencia de constantes](#12-configpy--referencia-de-constantes)
-13. [Bug activo — cv2.imshow no muestra imagen con picamera2 + torch](#13-bug-activo--cv2imshow-no-muestra-imagen-con-picamera2--torch-en-el-mismo-proceso)
+13. [Bug resuelto — cv2.imshow + picamera2 + torch (subproceso + Tkinter)](#13-bug-resuelto--cv2imshow--picamera2--torch-subproceso--tkinter)
 14. [Próximos pasos](#14-próximos-pasos)
 
 ---
@@ -87,6 +87,7 @@ La documentación completa del sensor y su configuración está en `docs/camera.
 | **Dataset capturado** | — | 1450 fotos reales, 14 clases, baraja de corazones |
 | **Auto-anotación ejecutada** | — | 1164 train / 286 val, 0 fallos |
 | **Modelo YOLOv8n entrenado** | — | **mAP50 = 0.960** · mAP50-95 = 0.949 · 3.9ms/imagen |
+| **Visualización en vivo + YOLO en Pi 5** | — | `test_detector.py` con `CameraIPC` (subproceso picamera2) + Tkinter — bug GLib+Qt5+torch resuelto (ver §13) |
 
 **Total: 55 tests, todos pasan.**
 
@@ -120,7 +121,8 @@ blackjack-cv/
 │   ├── decision/
 │   │   └── strategy.py              # Basic strategy completa: recommend() y full_row()
 │   ├── perception/
-│   │   ├── camera.py                # Wrapper picamera2 (Pi 5 + Bookworm)
+│   │   ├── camera.py                # Wrapper picamera2 (Pi 5 + Bookworm), mismo proceso
+│   │   ├── camera_ipc.py            # CameraIPC: picamera2 en subproceso (ver §13)
 │   │   ├── detector.py              # Detector YOLOv8 (stub gracioso sin modelo)
 │   │   └── chip_detector.py         # Detección de fichas por HSV
 │   ├── ui/
@@ -580,163 +582,132 @@ python main.py                      # sistema completo
 
 ---
 
-## 13. Bug activo — cv2.imshow no muestra imagen con picamera2 + torch en el mismo proceso
+## 13. Bug resuelto — cv2.imshow + picamera2 + torch (subproceso + Tkinter)
 
-### Resumen del problema
+> **Estado:** RESUELTO el 2026-05-15. `scripts/test_detector.py` ahora muestra el feed en vivo con detecciones YOLO en una ventana Tkinter sobre Pi 5 + Wayland. Esta sección queda como referencia histórica del problema y la solución aplicada.
 
-`scripts/test_detector.py` abre la cámara vía picamera2, carga YOLOv8 (torch), y llama a `cv2.imshow()` para mostrar el feed en vivo. La **detección YOLO funciona perfectamente** (detecta cartas con >90% de confianza), pero **la ventana de OpenCV no muestra imagen** — aparece en blanco o no aparece en absoluto.
+### Resumen del problema (cómo se manifestaba)
+
+`scripts/test_detector.py` abría la cámara vía `picamera2`, cargaba YOLOv8 (`torch`) y llamaba a `cv2.imshow()` para mostrar el feed en vivo. La **detección YOLO funcionaba perfectamente** (detectaba cartas con >90% de confianza), pero **la ventana de OpenCV no mostraba imagen** — aparecía en blanco o no aparecía en absoluto.
+
+```
+(python:12066): GLib-GObject-CRITICAL **: g_object_unref: assertion 'G_IS_OBJECT (object)' failed
+```
 
 ---
 
-### Entorno exacto
+### Entorno
 
 | Elemento | Valor |
 |---|---|
 | Hardware | Raspberry Pi 5 (BCM2712, aarch64) |
 | OS | Raspberry Pi OS Bookworm 64-bit |
-| Compositor de escritorio | **Wayland** (labwc). `XDG_SESSION_TYPE=wayland`, `WAYLAND_DISPLAY=wayland-0`, `DISPLAY=:0` (XWayland activo) |
-| Python | 3.13.5 (sistema: `/usr/bin/python3.13`) |
-| Entorno virtual | `venv/` creado con `--system-site-packages` |
-| OpenCV en venv | **4.10.0** — sistema (`/usr/lib/python3/dist-packages/cv2.cpython-313-aarch64-linux-gnu.so`), compilado con Qt5 |
-| OpenCV GUI backend | Qt5 15.15.15 (según `cv2.getBuildInformation()`) |
-| torch | 2.11.0+cu130 |
-| ultralytics | 8.4.48 |
-| picamera2 | 0.3.36 |
-| numpy | 2.2.4 |
+| Compositor | **Wayland** (labwc, XWayland activo) |
+| Python | 3.13.5 |
+| OpenCV | 4.10.0 del sistema, compilado con **Qt5** |
+| torch / ultralytics | 2.11.0+cu130 / 8.4.48 |
+| picamera2 / libcamera | 0.3.36 / v0.7.1 |
 
 ---
 
-### Qué funciona y qué no
+### Matriz de combinaciones probadas
 
 | Test | Resultado |
 |---|---|
-| `cv2.imshow` con numpy puro (sin cámara, sin torch) | ✅ Muestra ventana correctamente |
-| `cv2.imshow` con numpy + `import torch` (sin cámara) | ✅ Muestra ventana correctamente |
-| `cv2.imshow` con picamera2 abierta + torch cargado | ❌ Ventana blanca o no aparece |
-| YOLO detectando cartas (mismo proceso) | ✅ Detecta correctamente (K 90%, 10 95%, etc.) |
-| `capture_dataset.py` (picamera2 + cv2, sin torch) | ✅ Funciona — el usuario capturó 1450 fotos |
+| `cv2.imshow` con numpy puro | ✅ |
+| `cv2.imshow` + torch (sin cámara) | ✅ |
+| `cv2.imshow` + picamera2 (sin torch) → `capture_dataset.py` | ✅ (1450 fotos) |
+| `cv2.imshow` + picamera2 + torch en el MISMO proceso | ❌ Ventana blanca + GLib |
 
-**Conclusión:** el problema ocurre únicamente cuando **picamera2 + torch coexisten en el mismo proceso** con `cv2.imshow`. Por separado, cada uno funciona.
-
----
-
-### Síntomas exactos observados
-
-**Intento 1 — `QT_QPA_PLATFORM=xcb`, pip `opencv-python` 4.13 en venv:**
-```
-Listo. Pulsa ESPACIO para detectar. Q para salir.
-QFontDatabase: Cannot find font directory .../venv/lib/python3.13/site-packages/cv2/qt/fonts.
-[× 5 veces]
-```
-Resultado: no aparece ninguna ventana.
-
-**Intento 2 — misma config tras copiar fuentes DejaVu al directorio de Qt:**
-```
-(python:12066): GLib-GObject-CRITICAL **: g_object_unref: assertion 'G_IS_OBJECT (object)' failed
-```
-Resultado: aparece una ventana **blanca** (el frame no se renderiza). YOLO detecta cartas correctamente en terminal.
-
-**Intento 3 — `QT_QPA_PLATFORM=wayland` explícito:**
-Resultado: sin ventana visible.
-
-**Intento 4 — sin `QT_QPA_PLATFORM` (auto-detección):**
-Resultado: ventana blanca, misma situación que intento 2.
-
-**Intento 5 — pip `opencv-python` desinstalado, usando OpenCV 4.10 del sistema (mismo que `capture_dataset.py`):**
-- `cv2.imshow` con tensor + torch solo → ✅ ventana verde "FUNCIONA?" visible por el usuario.
-- `cv2.imshow` con picamera2 + torch → ❌ ventana blanca, error GLib-GObject.
-
-**Intento 6 — cámara primero, YOLO después (orden invertido):**
-Resultado: ventana blanca idéntica.
+Conclusión empírica: el fallo solo aparecía cuando los tres coexistían en el mismo proceso Python.
 
 ---
 
-### Error GLib-GObject observado
+### Intentos que NO funcionaron (descartados)
 
-```
-(python:12066): GLib-GObject-CRITICAL **: 02:23:24.380:
-g_object_unref: assertion 'G_IS_OBJECT (object)' failed
-```
-
-Este error aparece cuando coexisten picamera2 (que usa GLib internamente para el event loop de libcamera) y el OpenCV Qt5 (que usa su propio event loop). Indica un conflicto de gestión de objetos GLib entre las dos bibliotecas.
+| # | Intento | Resultado |
+|---|---|---|
+| 1 | `QT_QPA_PLATFORM=xcb` + pip `opencv-python` 4.13 | ❌ Sin ventana, error `QFontDatabase` |
+| 2 | Copiar fuentes DejaVu al dir de Qt | ❌ Ventana blanca + GLib-GObject |
+| 3 | `QT_QPA_PLATFORM=wayland` explícito | ❌ Sin ventana |
+| 4 | Sin `QT_QPA_PLATFORM` (auto-detección) | ❌ Ventana blanca |
+| 5 | OpenCV 4.10 del sistema en lugar del pip | ❌ Ventana blanca con picamera2 |
+| 6 | Invertir orden cámara/YOLO | ❌ Idéntico |
 
 ---
 
-### Archivos relevantes
+### Causa raíz
 
-**`src/perception/camera.py`** — wrapper picamera2:
+`picamera2` usa **libcamera**, que internamente arranca un event loop de **GLib/GObject**. OpenCV en este sistema está compilado con **Qt5**, que en Linux integra su event loop con GLib. Cuando además se carga `torch` (con sus muchas extensiones C), algo en la cadena invalida el contexto de renderizado de Qt y la ventana se queda sin contenido. El error `g_object_unref: assertion 'G_IS_OBJECT (object)' failed` es síntoma de que dos sistemas distintos gestionan los mismos objetos GLib.
+
+---
+
+### Solución aplicada — dos cambios combinados (ambos necesarios)
+
+**Aislar solo `picamera2` en otro proceso NO bastó.** El proceso principal seguía teniendo Qt5 (de `cv2.imshow`) + GLib (de Qt5) + torch, y la combinación seguía fallando. Hubo que sacar AMBOS del proceso principal:
+
+#### 1. `picamera2` en un subproceso `spawn`
+
+Archivo nuevo: **`src/perception/camera_ipc.py`**. Expone una clase `CameraIPC` con la misma interfaz que `Camera` (`.read()`, context manager), pero internamente arranca un subproceso `multiprocessing.get_context('spawn').Process` que es quien importa `picamera2` y lee frames. Los frames viajan al proceso principal vía `multiprocessing.shared_memory` (≈2.76 MB para 1280×720×3, copia con un `Lock` para evitar tearing).
+
+El proceso principal NUNCA importa `picamera2` — verificable con:
+
 ```python
-from picamera2 import Picamera2
-import cv2
-
-class Camera:
-    def __init__(self, source=0, width=1280, height=720):
-        self._cam = Picamera2(camera_num=source)
-        cfg = self._cam.create_video_configuration(
-            main={"format": "RGB888", "size": (width, height)}
-        )
-        self._cam.configure(cfg)
-        self._cam.start()
-        self._cam.set_controls({
-            "AfMode": 2, "AfRange": 0, "AfSpeed": 1,
-            "AeEnable": True, "AwbEnable": True,
-        })
-
-    def read(self):
-        # picamera2 en Pi 5 devuelve BGR pese al nombre "RGB888" — sin conversión
-        return self._cam.capture_array("main")
-
-    def release(self): self._cam.stop(); self._cam.close()
-    def __enter__(self): return self
-    def __exit__(self, *_): self.release()
+>>> from src.perception.camera_ipc import CameraIPC
+>>> import sys; 'picamera2' in sys.modules
+False
 ```
 
-**`scripts/test_detector.py`** — script con el bug (extracto principal):
+Cambio colateral: **`src/perception/__init__.py` se vació**. Antes reexportaba `Camera`, lo cual cargaba `picamera2` en cualquier proceso que importara el paquete y rompía el aislamiento. Los clientes ahora importan el submódulo concreto:
+
 ```python
-import os
-os.environ.setdefault('QT_QPA_PLATFORM', 'xcb')
-import cv2
-import numpy as np
-from ultralytics import YOLO
-from src.perception.camera import Camera
+from src.perception.camera import Camera          # versión clásica (mismo proceso)
+from src.perception.camera_ipc import CameraIPC   # versión aislada (cuando hay torch + display)
+```
 
-def main():
-    with Camera(width=1280, height=720) as cam:
-        for _ in range(20): cam.read()           # warmup
-        model = YOLO("models/yolov8n_blackjack.pt")
+#### 2. `cv2.imshow` reemplazado por Tkinter
 
-        while True:
-            frame = cam.read()                   # numpy uint8 BGR 1280×720
-            display = frame.copy()
-            cv2.imshow("Test Detector", display) # ← ventana blanca / no aparece
-            key = cv2.waitKey(30) & 0xFF
-            if key == ord(' '):
-                results = model(frame, verbose=False)[0]  # ← ESTO SÍ FUNCIONA
-                # imprime detecciones en terminal correctamente
+`scripts/test_detector.py` ya no usa `cv2.imshow`. La ventana se hace con `tkinter.Tk()` + `tkinter.Label` + `PIL.ImageTk.PhotoImage`. Tcl/Tk usa Xlib directamente — no toca ni Qt5 ni GLib. `cv2` se sigue usando solo para dibujar sobre el array numpy (cajas, texto), pero NO para ventanas.
+
+Truco de Tkinter+PIL: hay que guardar referencia al `PhotoImage` en un atributo (`self.image_label.image = photo`); si no, Tk lo recolecta como basura y la imagen desaparece.
+
+#### Arquitectura resultante
+
+```
+┌──────────────────────────┐         ┌──────────────────────────┐
+│ Proceso principal        │         │ Subproceso (spawn)       │
+│  - torch / YOLO          │  ◄────  │  - picamera2 (GLib aquí) │
+│  - tkinter / PIL         │  shm    │  - NO carga torch        │
+│  - cv2 (solo dibujar)    │         │  - escribe frames a shm  │
+└──────────────────────────┘         └──────────────────────────┘
 ```
 
 ---
 
-### Hipótesis de la causa raíz
+### Verificación
 
-picamera2 utiliza **GLib/GObject** internamente (libcamera usa el event loop de GLib). Al importar y arrancar picamera2, se inicializa un contexto GLib. OpenCV con Qt5 también intenta gestionar eventos mediante su propio bucle. Cuando torch/ultralytics también está presente, alguno de los tres inicializa algo que **invalida el surface/contexto de renderizado de Qt**, resultando en una ventana sin contenido (blanca).
+Primera prueba tras los cambios:
 
-El error `g_object_unref: assertion 'G_IS_OBJECT (object)' failed` sugiere que un objeto GLib está siendo liberado por dos sistemas distintos (double-free o uso tras liberación).
+```
+Abriendo cámara (subproceso picamera2)...
+[libcamera] configuring streams: 1280x720-RGB888
+Cargando modelo YOLO (puede tardar 1-2 min en Pi 5)...
+Listo. Abriendo ventana Tkinter...
+  226ms | DEALER: ['--'] | PLAYER: ['K(96%)']
+```
+
+Ventana Tkinter visible, feed en vivo a ~30 FPS, YOLO detectando una **K con 96%** de confianza al pulsar ESPACIO sobre la carta.
 
 ---
 
-### Lo que se necesita
+### Lecciones aprendidas
 
-Una solución que permita en el **mismo proceso Python 3.13**:
-1. Leer frames de picamera2 (IMX708, Pi 5)
-2. Procesar con YOLOv8 / torch
-3. Mostrar el frame en una ventana visible en el escritorio Wayland de la Pi
+- **No mezclar GLib + Qt5 + torch en el mismo proceso Python** en Pi 5 con Wayland. Si dos de los tres tienen que coexistir, el tercero debe ir a otro proceso.
+- `multiprocessing.get_context('spawn')` es la herramienta correcta para aislar bibliotecas con extensiones C conflictivas — `fork` heredaría todo el estado del padre.
+- En Pi 5 + Wayland, **Tkinter es más fiable que `cv2.imshow`** cuando hay otras librerías compitiendo por GLib.
+- Si algún script futuro (p.ej. `main.py`) debe combinar Pi Camera + YOLO + ventana en vivo, **usar `CameraIPC` + Tkinter**, no `Camera` + `cv2.imshow`.
 
-Soluciones aceptables:
-- Configuración de entorno / env vars que resuelva el conflicto Qt-GLib
-- Uso de otra API de display (picamera2 QtGlPreview, SDL2, tkinter, etc.) en lugar de `cv2.imshow`
-- Arquitectura alternativa (subproceso para cámara, IPC para frames, etc.)
-- Cualquier otra solución probada en Pi 5 + Bookworm + Wayland
+Documentación detallada del proceso de diagnóstico y solución en `notebooks/dia_2_dataset_y_entrenamiento.ipynb` sección 6.
 
 ---
 
